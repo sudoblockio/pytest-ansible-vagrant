@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 
 from typing import Callable
@@ -10,7 +12,12 @@ from testinfra import get_host
 from testinfra.host import Host
 
 from pytest_ansible_vagrant.ansible import run_playbook_on_host
-from pytest_ansible_vagrant.util import require_bins
+
+
+def require_bins(*bins: str) -> None:
+    missing = [b for b in bins if shutil.which(b) is None]
+    if missing:
+        raise RuntimeError("Missing required binaries: " + ", ".join(missing))
 
 
 def pytest_addoption(parser):

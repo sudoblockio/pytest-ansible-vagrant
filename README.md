@@ -1,5 +1,10 @@
 # pytest-sb-ansible
 
+[![Tests](https://github.com/sudoblockio-new/pytest-ansible-vagrant/actions/workflows/main.yaml/badge.svg?branch=main)](https://github.com/sudoblockio-new/pytest-ansible-vagrant/actions/workflows/main.yaml)
+[![Copybara](https://github.com/sudoblockio-new/pytest-ansible-vagrant/actions/workflows/copy.yaml/badge.svg?branch=main)](https://github.com/sudoblockio-new/pytest-ansible-vagrant/actions/workflows/copy.yaml)
+![GitHub Release Date](https://img.shields.io/github/release-date/sudoblockio-new/pytest-ansible-vagrant)
+![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/sudoblockio-new/pytest-ansible-vagrant)
+
 Pytest plugins for running various ansible tests against VMs in vagrant.
 
 ## VMs / Vagrant
