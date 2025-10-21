@@ -1,13 +1,13 @@
-import shutil
+from __future__ import annotations
 
-import pytest
-
-from typing import Callable
 import os
 import re
+import shutil
 import subprocess
-from typing import TypedDict
+from enum import Enum
+from typing import Callable, TypedDict
 
+import pytest
 from testinfra import get_host
 from testinfra.host import Host
 
@@ -20,15 +20,80 @@ def require_bins(*bins: str) -> None:
         raise RuntimeError("Missing required binaries: " + ", ".join(missing))
 
 
-def pytest_addoption(parser):
-    v = parser.getgroup("vagrant")
-    v.addoption("--vagrant-file", action="store", default="Vagrantfile")
-    v.addoption(
-        "--vagrant-shutdown",
-        action="store",
-        choices=("halt", "destroy", "none"),
+class ShutdownMode(str, Enum):
+    HALT = "halt"
+    DESTROY = "destroy"
+    NONE = "none"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register CLI options and ini keys."""
+    parser.addini(
+        "vagrant_shutdown",
+        "Vagrant shutdown behavior (halt|destroy|none).",
         default="destroy",
     )
+    parser.addini("vagrant_file", "Path to the Vagrantfile.", default="Vagrantfile")
+
+    grp = parser.getgroup("vagrant")
+    grp.addoption(
+        "--vagrant-file",
+        action="store",
+        dest="vagrant_file",
+        help="Path to the Vagrantfile (overrides ini/env).",
+    )
+    grp.addoption(
+        "--vagrant-shutdown",
+        action="store",
+        dest="vagrant_shutdown",
+        choices=[m.value for m in ShutdownMode],
+        help="Shutdown behavior after tests: halt|destroy|none (overrides ini/env).",
+    )
+
+
+def _read_opt(
+    config: pytest.Config, name: str, env: str, ini: str, default: str
+) -> str:
+    """
+    Precedence: CLI (--name) > ini (ini) > env (env) > default.
+    """
+    from_cli = config.getoption(name, default=None)
+    if from_cli:
+        return str(from_cli)
+    from_ini = config.getini(ini)
+    if isinstance(from_ini, str) and from_ini.strip():
+        return from_ini.strip()
+    from_env = os.getenv(env)
+    if from_env:
+        return from_env.strip()
+    return default
+
+
+def _resolve_vagrant_file(config: pytest.Config) -> str:
+    return _read_opt(
+        config=config,
+        name="vagrant_file",
+        env="VAGRANT_FILE",
+        ini="vagrant_file",
+        default="Vagrantfile",
+    )
+
+
+def _resolve_shutdown_mode(config: pytest.Config) -> ShutdownMode:
+    raw = _read_opt(
+        config=config,
+        name="vagrant_shutdown",
+        env="VAGRANT_SHUTDOWN",
+        ini="vagrant_shutdown",
+        default=ShutdownMode.DESTROY.value,
+    ).lower()
+    try:
+        return ShutdownMode(raw)
+    except ValueError as e:
+        raise pytest.UsageError(
+            f"Invalid vagrant_shutdown={raw!r}. Must be one of: "
+            + ", ".join(m.value for m in ShutdownMode)
+        ) from e
 
 
 _PAT_HOST = re.compile(r"^\s*Host\s+(\S+)\s*$", re.IGNORECASE)
@@ -44,7 +109,7 @@ class SSHConfig(TypedDict):
     identityfile: str
 
 
-def _from_ssh_config(text: str) -> "SSHConfig":
+def _from_ssh_config(text: str) -> SSHConfig:
     in_block = False
     fields: dict[str, str] = {}
     for raw in text.splitlines():
@@ -120,9 +185,8 @@ def halt(vagrantfile: str) -> int:
 
 
 def destroy(vagrantfile: str, force: bool = True) -> int:
-    return _run(
-        ["destroy", "-f"] if force else ["destroy"], vagrantfile, check=False
-    ).returncode
+    args = ["destroy", "-f"] if force else ["destroy"]
+    return _run(args, vagrantfile, check=False).returncode
 
 
 def ssh_config(vagrantfile: str) -> SSHConfig:
@@ -131,22 +195,23 @@ def ssh_config(vagrantfile: str) -> SSHConfig:
 
 
 @pytest.fixture(scope="module")
-def vagrant_run(request) -> Callable[..., Host]:
+def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
     """
     Callable fixture:
       vagrant_run(playbook=..., project_dir=..., vagrant_file=...) -> Host
-    VM is brought up once per module and torn down at fixture teardown.
+
+    - Brings the VM up once per module.
+    - Applies the given Ansible playbook to the guest.
+    - Returns a testinfra Host connected over SSH.
+    - Teardown honors the shutdown policy (halt|destroy|none).
     """
     vf: str | None = None
 
-    def _run(
-        *,
-        playbook: str,
-        project_dir: str,
-        vagrant_file: str | None = None,
+    def _runner(
+        *, playbook: str, project_dir: str, vagrant_file: str | None = None
     ) -> Host:
         nonlocal vf
-        vf = vagrant_file or request.config.getoption("vagrant_file")
+        vf = vagrant_file or _resolve_vagrant_file(request.config)
 
         up(vf)
         cfg = ssh_config(vf)
@@ -158,10 +223,18 @@ def vagrant_run(request) -> Callable[..., Host]:
         )
 
     try:
-        yield _run
+        yield _runner
     finally:
-        shutdown: str = request.config.getoption("vagrant_shutdown")
-        if shutdown == "halt":
+        # If the VM never came up (test aborted early), do nothing.
+        # TODO: Why is this? Why no error? Not trying to catch errors
+        if not vf:
+            return
+
+        mode = _resolve_shutdown_mode(request.config)
+        if mode is ShutdownMode.HALT:
             halt(vf)
-        elif shutdown == "destroy":
+        elif mode is ShutdownMode.DESTROY:
             destroy(vf)
+        elif mode is ShutdownMode.NONE:
+            # leave it running
+            pass
