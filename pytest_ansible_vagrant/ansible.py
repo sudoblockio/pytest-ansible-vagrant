@@ -1,6 +1,7 @@
 import os
 from typing import Any, Mapping
 
+import yaml
 from ansible_runner import Runner, RunnerConfig
 
 
@@ -30,6 +31,32 @@ def run_playbook(
         raise RuntimeError(f"play failed: status={status}, rc={rc}")
 
 
+def _extract_play_hosts(playbook_path: str) -> list[str]:
+    with open(playbook_path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+
+    if isinstance(data, list):
+        plays = [p for p in data if isinstance(p, dict)]
+    elif isinstance(data, dict):
+        plays = [data]
+    else:
+        return []
+
+    out: list[str] = []
+    for p in plays:
+        h = p.get("hosts")
+        if isinstance(h, str) and h.strip():
+            out.append(h.strip())
+
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for h in out:
+        if h not in seen:
+            uniq.append(h)
+            seen.add(h)
+    return uniq
+
+
 def run_playbook_on_host(
     hostname: str,
     port: int,
@@ -37,7 +64,9 @@ def run_playbook_on_host(
     identityfile: str,
     playbook: str,
     project_dir: str,
-):
+    *,
+    inventory_file: str | None = None,
+) -> None:
     ssh_vars = {
         "ansible_connection": "ssh",
         "ansible_host": hostname,
@@ -48,10 +77,24 @@ def run_playbook_on_host(
         "ansible_python_interpreter": "/usr/bin/python3",
     }
 
+    if inventory_file:
+        run_playbook(
+            playbook=playbook,
+            project_dir=project_dir,
+            roles_path=os.path.join(project_dir, "roles"),
+            inventory=inventory_file,
+            extravars=ssh_vars,
+        )
+        return
+
+    patterns = _extract_play_hosts(playbook)
+    host_aliases: list[str] = patterns or ["vagrant_host"]
+    hostlist = ",".join(host_aliases) + ","
+
     run_playbook(
         playbook=playbook,
         project_dir=project_dir,
         roles_path=os.path.join(project_dir, "roles"),
-        inventory="target,",
+        inventory=hostlist,
         extravars=ssh_vars,
     )

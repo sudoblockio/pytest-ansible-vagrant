@@ -1,0 +1,5 @@
+---
+- hosts: some_target_that_will_be_overridden
+  gather_facts: false
+  roles:
+    - my_vm_role

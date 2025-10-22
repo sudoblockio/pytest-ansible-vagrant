@@ -27,7 +27,6 @@ class ShutdownMode(str, Enum):
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register CLI options and ini keys."""
     parser.addini(
         "vagrant_shutdown",
         "Vagrant shutdown behavior (halt|destroy|none).",
@@ -54,9 +53,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def _read_opt(
     config: pytest.Config, name: str, env: str, ini: str, default: str
 ) -> str:
-    """
-    Precedence: CLI (--name) > ini (ini) > env (env) > default.
-    """
     from_cli = config.getoption(name, default=None)
     if from_cli:
         return str(from_cli)
@@ -196,26 +192,26 @@ def ssh_config(vagrantfile: str) -> SSHConfig:
 
 @pytest.fixture(scope="module")
 def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
-    """
-    Callable fixture:
-      vagrant_run(playbook=..., project_dir=..., vagrant_file=...) -> Host
-
-    - Brings the VM up once per module.
-    - Applies the given Ansible playbook to the guest.
-    - Returns a testinfra Host connected over SSH.
-    - Teardown honors the shutdown policy (halt|destroy|none).
-    """
     vf: str | None = None
 
     def _runner(
-        *, playbook: str, project_dir: str, vagrant_file: str | None = None
+        *,
+        playbook: str,
+        project_dir: str,
+        vagrant_file: str | None = None,
+        inventory_file: str | None = None,
     ) -> Host:
         nonlocal vf
         vf = vagrant_file or _resolve_vagrant_file(request.config)
 
         up(vf)
         cfg = ssh_config(vf)
-        run_playbook_on_host(playbook=playbook, project_dir=project_dir, **cfg)
+        run_playbook_on_host(
+            playbook=playbook,
+            project_dir=project_dir,
+            inventory_file=inventory_file,
+            **cfg,
+        )
         return get_host(
             f"ssh://{cfg['user']}@{cfg['hostname']}:{cfg['port']}",
             ssh_identity_file=cfg["identityfile"],
@@ -225,16 +221,12 @@ def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
     try:
         yield _runner
     finally:
-        # If the VM never came up (test aborted early), do nothing.
-        # TODO: Why is this? Why no error? Not trying to catch errors
         if not vf:
             return
-
         mode = _resolve_shutdown_mode(request.config)
         if mode is ShutdownMode.HALT:
             halt(vf)
         elif mode is ShutdownMode.DESTROY:
             destroy(vf)
         elif mode is ShutdownMode.NONE:
-            # leave it running
             pass
