@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.entry-points.pytest11]
-sb-ansible-vagrant = "pytest_ansible_vagrant.vagrant"
+sb-ansible-vagrant = "pytest_ansible_vagrant.main"
 
 [build-system]
 requires = ["setuptools>=68"]

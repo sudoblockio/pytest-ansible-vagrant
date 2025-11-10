@@ -1,17 +1,21 @@
+from __future__ import annotations
+
 import os
 from typing import Any
 
-import yaml
-from ansible_runner import Runner, RunnerConfig
+from ansible_runner import RunnerConfig, Runner
+
+from pytest_ansible_vagrant.utilities import extract_play_hosts
+from pytest_ansible_vagrant.vagrant import SSHConfig
 
 
-def run_playbook(
-    playbook: str,
+def _ansible_run_playbook(
     *,
+    playbook: str,
     project_dir: str,
-    roles_path: str | None = None,
-    inventory: str = "localhost,",
-    extravars: dict[str, Any] | None = None,
+    roles_path: str | None,
+    inventory: str,
+    extravars: dict[str, Any] | None,
     artifact_subdir: str = ".artifacts",
 ) -> None:
     rcfg = RunnerConfig(
@@ -29,64 +33,35 @@ def run_playbook(
         raise RuntimeError(f"play failed: status={status}, rc={rc}")
 
 
-def _extract_play_hosts(playbook_path: str) -> list[str]:
-    with open(playbook_path, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-
-    if isinstance(data, list):
-        plays = [p for p in data if isinstance(p, dict)]
-    elif isinstance(data, dict):
-        plays = [data]
-    else:
-        return []
-
-    out: list[str] = []
-    for p in plays:
-        h = p.get("hosts")
-        if isinstance(h, str):
-            hv = h.strip()
-            if hv:
-                out.append(hv)
-
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for h in out:
-        if h not in seen:
-            uniq.append(h)
-            seen.add(h)
-    return uniq
-
-
-def run_playbook_on_host(
-    hostname: str,
-    port: int,
-    user: str,
-    identityfile: str,
+def run_playbook_on_vagrant_host(
+    *,
     playbook: str,
     project_dir: str,
-    *,
-    inventory_file: str | None = None,
-    extravars: dict[str, Any] | None = None,
+    ssh: SSHConfig,
+    inventory_file: str | None,
+    extravars: dict[str, Any] | None,
 ) -> None:
+    if inventory_file:
+        inv = inventory_file
+    else:
+        patterns = extract_play_hosts(playbook)
+        host_aliases = patterns or ["vagrant_host"]
+        inv = ",".join(host_aliases) + ","
+
     ssh_vars = {
         "ansible_connection": "ssh",
-        "ansible_host": hostname,
-        "ansible_port": port,
-        "ansible_user": user,
-        "ansible_ssh_private_key_file": identityfile,
+        "ansible_host": ssh["hostname"],
+        "ansible_port": ssh["port"],
+        "ansible_user": ssh["user"],
+        "ansible_ssh_private_key_file": ssh["identityfile"],
         "ansible_ssh_common_args": "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
         "ansible_python_interpreter": "/usr/bin/python3",
     }
 
-    if not inventory_file:
-        patterns = _extract_play_hosts(playbook)
-        host_aliases: list[str] = patterns or ["vagrant_host"]
-        inventory_file = ",".join(host_aliases) + ","
-
-    run_playbook(
+    _ansible_run_playbook(
         playbook=playbook,
         project_dir=project_dir,
         roles_path=os.path.join(project_dir, "roles"),
-        inventory=inventory_file,
-        extravars=ssh_vars | (extravars or {}),
+        inventory=inv,
+        extravars=(extravars or {}) | ssh_vars,
     )
