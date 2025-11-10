@@ -27,13 +27,20 @@ class ShutdownMode(str, Enum):
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    # INI options
     parser.addini(
         "vagrant_shutdown",
         "Vagrant shutdown behavior (halt|destroy|none).",
         default="destroy",
     )
     parser.addini("vagrant_file", "Path to the Vagrantfile.", default="Vagrantfile")
+    parser.addini(
+        "vagrant_project_dir",
+        "Base project directory; if omitted it is inferred as the parent of the nearest `tests/` directory.",
+        default="",
+    )
 
+    # CLI options (namespaced to avoid conflicts with other plugins)
     grp = parser.getgroup("vagrant")
     grp.addoption(
         "--vagrant-file",
@@ -47,6 +54,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         dest="vagrant_shutdown",
         choices=[m.value for m in ShutdownMode],
         help="Shutdown behavior after tests: halt|destroy|none (overrides ini/env).",
+    )
+    grp.addoption(
+        "--vagrant-project-dir",
+        action="store",
+        dest="vagrant_project_dir",
+        help="Base directory containing roles/ and tests/ (overrides ini).",
     )
 
 
@@ -65,14 +78,50 @@ def _read_opt(
     return default
 
 
-def _resolve_vagrant_file(config: pytest.Config) -> str:
-    return _read_opt(
+def _infer_project_dir_from_request(request: pytest.FixtureRequest) -> str:
+    test_file = os.path.abspath(str(request.fspath))
+    cur = os.path.dirname(test_file)
+    while True:
+        if os.path.basename(cur) == "tests":
+            return os.path.dirname(cur)
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return os.path.dirname(os.path.dirname(test_file))
+        cur = parent
+
+
+def _resolve_playbook_path(project_dir: str, playbook: str) -> str:
+    if os.path.isabs(playbook):
+        if os.path.exists(playbook):
+            return playbook
+        raise FileNotFoundError(f"playbook not found: {playbook!r}")
+    candidate = os.path.join(project_dir, playbook)
+    if os.path.exists(candidate):
+        return candidate
+    raise FileNotFoundError(
+        f"playbook not found relative to project_dir. "
+        f"project_dir={project_dir!r}, playbook={playbook!r}, tried={candidate!r}"
+    )
+
+
+def _resolve_inventory_path(project_dir: str, inventory_file: str | None) -> str | None:
+    if not inventory_file:
+        return None
+    if os.path.isabs(inventory_file):
+        return inventory_file
+    candidate = os.path.join(project_dir, inventory_file)
+    return candidate if os.path.exists(candidate) else inventory_file
+
+
+def _resolve_vagrant_file(config: pytest.Config, base_dir: str) -> str:
+    vf_raw = _read_opt(
         config=config,
         name="vagrant_file",
         env="VAGRANT_FILE",
         ini="vagrant_file",
         default="Vagrantfile",
     )
+    return vf_raw if os.path.isabs(vf_raw) else os.path.join(base_dir, vf_raw)
 
 
 def _resolve_shutdown_mode(config: pytest.Config) -> ShutdownMode:
@@ -192,26 +241,62 @@ def ssh_config(vagrantfile: str) -> SSHConfig:
 
 @pytest.fixture(scope="module")
 def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
-    vf: str | None = None
+    vf_abs: str | None = None
+
+    # Resolve project_dir: CLI > INI > inferred
+    proj_cli = request.config.getoption("vagrant_project_dir", default=None)
+    proj_ini = (request.config.getini("vagrant_project_dir") or "").strip()
+    if proj_cli:
+        default_project_dir = os.path.abspath(proj_cli)
+    elif proj_ini:
+        default_project_dir = os.path.abspath(proj_ini)
+    else:
+        default_project_dir = _infer_project_dir_from_request(request)
+
+    assert (
+        os.path.isdir(default_project_dir)
+        and os.path.isdir(os.path.join(default_project_dir, "tests"))
+        and os.path.isdir(os.path.join(default_project_dir, "roles"))
+    ), (
+        f"Invalid ansible project layout. Expected sibling 'tests' and 'roles' "
+        f"under project_dir; resolved project_dir={default_project_dir!r}"
+    )
 
     def _runner(
-        *,
         playbook: str,
-        project_dir: str,
+        project_dir: str | None = None,
         vagrant_file: str | None = None,
         inventory_file: str | None = None,
     ) -> Host:
-        nonlocal vf
-        vf = vagrant_file or _resolve_vagrant_file(request.config)
+        nonlocal vf_abs
 
-        up(vf)
-        cfg = ssh_config(vf)
+        proj = os.path.abspath(project_dir) if project_dir else default_project_dir
+        resolved_playbook = _resolve_playbook_path(proj, playbook)
+        resolved_inventory = _resolve_inventory_path(proj, inventory_file)
+
+        if vagrant_file:
+            vf_abs = (
+                vagrant_file
+                if os.path.isabs(vagrant_file)
+                else os.path.join(proj, vagrant_file)
+            )
+        else:
+            vf_abs = _resolve_vagrant_file(request.config, proj)
+
+        if not os.path.exists(vf_abs):
+            raise FileNotFoundError(f"Vagrantfile not found at: {vf_abs!r}")
+
+        up(vf_abs)
+        cfg = ssh_config(vf_abs)
+
         run_playbook_on_host(
-            playbook=playbook,
-            project_dir=project_dir,
-            inventory_file=inventory_file,
+            playbook=resolved_playbook,
+            project_dir=proj,
+            inventory_file=resolved_inventory,
+            envvars={},
             **cfg,
         )
+
         return get_host(
             f"ssh://{cfg['user']}@{cfg['hostname']}:{cfg['port']}",
             ssh_identity_file=cfg["identityfile"],
@@ -221,12 +306,12 @@ def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
     try:
         yield _runner
     finally:
-        if not vf:
+        if not vf_abs:
             return
         mode = _resolve_shutdown_mode(request.config)
         if mode is ShutdownMode.HALT:
-            halt(vf)
+            halt(vf_abs)
         elif mode is ShutdownMode.DESTROY:
-            destroy(vf)
+            destroy(vf_abs)
         elif mode is ShutdownMode.NONE:
             pass

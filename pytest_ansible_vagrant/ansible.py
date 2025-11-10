@@ -45,8 +45,10 @@ def _extract_play_hosts(playbook_path: str) -> list[str]:
     out: list[str] = []
     for p in plays:
         h = p.get("hosts")
-        if isinstance(h, str) and h.strip():
-            out.append(h.strip())
+        if isinstance(h, str):
+            hv = h.strip()
+            if hv:
+                out.append(hv)
 
     seen: set[str] = set()
     uniq: list[str] = []
@@ -66,6 +68,7 @@ def run_playbook_on_host(
     project_dir: str,
     *,
     inventory_file: str | None = None,
+    envvars: Mapping[str, str] | None = None,
 ) -> None:
     ssh_vars = {
         "ansible_connection": "ssh",
@@ -84,6 +87,7 @@ def run_playbook_on_host(
             roles_path=os.path.join(project_dir, "roles"),
             inventory=inventory_file,
             extravars=ssh_vars,
+            envvars=dict(envvars or {}),
         )
         return
 
@@ -97,4 +101,5 @@ def run_playbook_on_host(
         roles_path=os.path.join(project_dir, "roles"),
         inventory=hostlist,
         extravars=ssh_vars,
+        envvars=dict(envvars or {}),
     )
