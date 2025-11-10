@@ -1,7 +1,7 @@
 ---
 - name: Create test file in /etc/testfile
   copy:
-    dest: /etc/testfile
+    dest: /etc/{{ my_var }}file
     content: "this is a test file\n"
     owner: root
     group: root

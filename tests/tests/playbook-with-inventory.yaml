@@ -1,5 +1,7 @@
 ---
 - hosts: target
   gather_facts: false
+  vars:
+    my_var: foo
   roles:
     - my_vm_role

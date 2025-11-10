@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 from enum import Enum
-from typing import Callable, TypedDict
+from typing import Callable, TypedDict, Any
 
 import pytest
 from testinfra import get_host
@@ -266,6 +266,7 @@ def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
         playbook: str,
         project_dir: str | None = None,
         vagrant_file: str | None = None,
+        extravars: dict[str, Any] | None = None,
         inventory_file: str | None = None,
     ) -> Host:
         nonlocal vf_abs
@@ -293,7 +294,7 @@ def vagrant_run(request: pytest.FixtureRequest) -> Callable[..., Host]:
             playbook=resolved_playbook,
             project_dir=proj,
             inventory_file=resolved_inventory,
-            envvars={},
+            extravars=extravars,
             **cfg,
         )
 

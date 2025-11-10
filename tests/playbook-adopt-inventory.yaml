@@ -1,5 +1,7 @@
 ---
 - hosts: some_target_that_will_be_overridden
   gather_facts: false
+  vars:
+    my_var: foo
   roles:
     - my_vm_role

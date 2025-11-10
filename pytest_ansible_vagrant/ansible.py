@@ -1,5 +1,5 @@
 import os
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
 from ansible_runner import Runner, RunnerConfig
@@ -11,8 +11,7 @@ def run_playbook(
     project_dir: str,
     roles_path: str | None = None,
     inventory: str = "localhost,",
-    extravars: Mapping[str, Any] | None = None,
-    envvars: Mapping[str, str] | None = None,
+    extravars: dict[str, Any] | None = None,
     artifact_subdir: str = ".artifacts",
 ) -> None:
     rcfg = RunnerConfig(
@@ -22,8 +21,7 @@ def run_playbook(
         playbook=playbook,
         inventory=inventory,
         artifact_dir=os.path.join(project_dir, artifact_subdir),
-        extravars=dict(extravars or {}),
-        envvars=dict(envvars or {}),
+        extravars=extravars or {},
     )
     rcfg.prepare()
     status, rc = Runner(config=rcfg).run()
@@ -68,7 +66,7 @@ def run_playbook_on_host(
     project_dir: str,
     *,
     inventory_file: str | None = None,
-    envvars: Mapping[str, str] | None = None,
+    extravars: dict[str, Any] | None = None,
 ) -> None:
     ssh_vars = {
         "ansible_connection": "ssh",
@@ -80,26 +78,15 @@ def run_playbook_on_host(
         "ansible_python_interpreter": "/usr/bin/python3",
     }
 
-    if inventory_file:
-        run_playbook(
-            playbook=playbook,
-            project_dir=project_dir,
-            roles_path=os.path.join(project_dir, "roles"),
-            inventory=inventory_file,
-            extravars=ssh_vars,
-            envvars=dict(envvars or {}),
-        )
-        return
-
-    patterns = _extract_play_hosts(playbook)
-    host_aliases: list[str] = patterns or ["vagrant_host"]
-    hostlist = ",".join(host_aliases) + ","
+    if not inventory_file:
+        patterns = _extract_play_hosts(playbook)
+        host_aliases: list[str] = patterns or ["vagrant_host"]
+        inventory_file = ",".join(host_aliases) + ","
 
     run_playbook(
         playbook=playbook,
         project_dir=project_dir,
         roles_path=os.path.join(project_dir, "roles"),
-        inventory=hostlist,
-        extravars=ssh_vars,
-        envvars=dict(envvars or {}),
+        inventory=inventory_file,
+        extravars=ssh_vars | (extravars or {}),
     )
