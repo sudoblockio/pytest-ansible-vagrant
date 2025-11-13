@@ -1,65 +1,59 @@
 from __future__ import annotations
 
-import os
-from typing import Any, Callable, Generator
+from typing import Generator
 
 import pytest
-from testinfra import get_host
-from testinfra.host import Host
 
-from pytest_ansible_vagrant.ansible import run_playbook_on_vagrant_host
-from pytest_ansible_vagrant.utilities import (
-    addoption_safe,
-    addini_safe,
-    infer_project_dir_from_request,
-    resolve_playbook_path,
-    resolve_inventory_path,
-)
-from pytest_ansible_vagrant.vagrant import ShutdownMode, up, halt, destroy, ssh_config
+from pytest_ansible_vagrant.runner import ShutdownMode, VagrantRunner, destroy, halt
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    addini_safe(
-        parser,
+    parser.addini(
         "vagrant_shutdown",
         "Vagrant shutdown behavior (halt|destroy|none).",
         default=ShutdownMode.DESTROY.value,
     )
-    addini_safe(
-        parser,
+    parser.addini(
         "vagrant_file",
         "Path to the Vagrantfile.",
         default="Vagrantfile",
     )
-    addini_safe(
-        parser,
+    parser.addini(
         "vagrant_project_dir",
         "Base project directory; if omitted it is inferred as the parent of the nearest `tests/` directory.",
         default="",
     )
+    parser.addini(
+        "vagrant_artifact_dir",
+        "Directory to store artifacts from ansible run.",
+        default="",
+    )
 
     grp = parser.getgroup("vagrant")
-    addoption_safe(
-        grp,
+    grp.addoption(
         "--vagrant-file",
         action="store",
         dest="vagrant_file",
         help="Path to the Vagrantfile",
     )
-    addoption_safe(
-        grp,
+    grp.addoption(
         "--vagrant-shutdown",
         action="store",
         dest="vagrant_shutdown",
         choices=[m.value for m in ShutdownMode],
         help="Shutdown behavior after tests: halt|destroy|none",
     )
-    addoption_safe(
-        grp,
+    grp.addoption(
         "--vagrant-project-dir",
         action="store",
         dest="vagrant_project_dir",
         help="Base directory containing roles/ and tests/",
+    )
+    grp.addoption(
+        "--vagrant-artifact-dir",
+        action="store",
+        dest="vagrant_artifact_dir",
+        help="Directory to store artifacts from ansible run.",
     )
 
 
@@ -84,84 +78,15 @@ def _resolve_shutdown_mode(config: pytest.Config) -> ShutdownMode:
         ) from e
 
 
-def _resolve_vagrant_file(config: pytest.Config, base_dir: str) -> str:
-    vf = (
-        config.getoption("vagrant_file", default=None)
-        or (config.getini("vagrant_file") or "").strip()
-        or "Vagrantfile"
-    )
-    return vf if os.path.isabs(vf) else os.path.join(base_dir, vf)
-
-
 @pytest.fixture(scope="module")
-def vagrant_run(
+def vagrant_runner(
     request: pytest.FixtureRequest,
-) -> Generator[Callable[..., Host], None, None]:
-    vf_abs: str | None = None
-
-    proj_cli = request.config.getoption("vagrant_project_dir", default=None)
-    proj_ini = (request.config.getini("vagrant_project_dir") or "").strip()
-    if proj_cli:
-        default_project_dir = os.path.abspath(proj_cli)
-    elif proj_ini:
-        default_project_dir = os.path.abspath(proj_ini)
-    else:
-        default_project_dir = infer_project_dir_from_request(request)
-
-    assert (
-        os.path.isdir(default_project_dir)
-        and os.path.isdir(os.path.join(default_project_dir, "tests"))
-        and os.path.isdir(os.path.join(default_project_dir, "roles"))
-    ), (
-        f"Invalid ansible project layout. Expected sibling 'tests' and 'roles' "
-        f"under project_dir; resolved project_dir={default_project_dir!r}"
-    )
-
-    def _runner(
-        playbook: str,
-        project_dir: str | None = None,
-        vagrant_file: str | None = None,
-        extravars: dict[str, Any] | None = None,
-        inventory_file: str | None = None,
-    ) -> Host:
-        nonlocal vf_abs
-
-        proj = os.path.abspath(project_dir) if project_dir else default_project_dir
-        resolved_playbook = resolve_playbook_path(proj, playbook)
-        resolved_inventory = resolve_inventory_path(proj, inventory_file)
-
-        if vagrant_file:
-            vf_abs = (
-                vagrant_file
-                if os.path.isabs(vagrant_file)
-                else os.path.join(proj, vagrant_file)
-            )
-        else:
-            vf_abs = _resolve_vagrant_file(request.config, proj)
-
-        if not os.path.exists(vf_abs):
-            raise FileNotFoundError(f"Vagrantfile not found at: {vf_abs!r}")
-
-        up(vf_abs)
-        cfg = ssh_config(vf_abs)
-
-        run_playbook_on_vagrant_host(
-            playbook=resolved_playbook,
-            project_dir=proj,
-            ssh=cfg,
-            inventory_file=resolved_inventory,
-            extravars=extravars,
-        )
-
-        return get_host(
-            f"ssh://{cfg['user']}@{cfg['hostname']}:{cfg['port']}",
-            ssh_identity_file=cfg["identityfile"],
-            ssh_extra_args="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null",
-        )
-
+) -> Generator[VagrantRunner, None, None]:
+    runner = VagrantRunner(request)
     try:
-        yield _runner
+        yield runner
     finally:
+        vf_abs = runner.vagrantfile
         if not vf_abs:
             return
         mode = _resolve_shutdown_mode(request.config)

@@ -14,26 +14,6 @@ def require_bins(*bins: str) -> None:
         raise RuntimeError("Missing required binaries: " + ", ".join(missing))
 
 
-def addoption_safe(group, *args, **kwargs) -> bool:
-    """Register a pytest option; tolerate duplicates from other plugins."""
-    try:
-        group.addoption(*args, **kwargs)
-        return True
-    except ValueError:
-        return False
-
-
-def addini_safe(
-    parser, name: str, help_text: str, *, default: str | None = None
-) -> bool:
-    """Register a pytest ini key; tolerate duplicates from other plugins."""
-    try:
-        parser.addini(name, help_text, default=default)
-        return True
-    except ValueError:
-        return False
-
-
 def infer_project_dir_from_request(request: pytest.FixtureRequest) -> str:
     """
     Walk up from the test file until 'tests/' is found, then return its parent.

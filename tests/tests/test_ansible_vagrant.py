@@ -1,11 +1,14 @@
-def test_ansible_vagrant_adopt_inventory_simple(vagrant_run):
-    host = vagrant_run("playbook-adopt-inventory.yaml")
+from pytest_ansible_vagrant import VagrantRunner
+
+
+def test_ansible_vagrant_inventory_simple(vagrant_runner: VagrantRunner):
+    host = vagrant_runner("playbook.yaml")
 
     assert host.file("/etc/foofile").is_file
 
 
-def test_ansible_vagrant_inventory_with_inventory(vagrant_run):
-    host = vagrant_run(
+def test_ansible_vagrant_inventory_with_inventory(vagrant_runner: VagrantRunner):
+    host = vagrant_runner(
         "tests/playbook-with-inventory.yaml",
         inventory_file="tests/inventory.ini",
         extravars={"my_var": "bar"},

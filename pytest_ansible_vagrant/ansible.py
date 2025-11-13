@@ -1,36 +1,13 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from typing import Any
 
-from ansible_runner import RunnerConfig, Runner
+from ansible_runner import Runner, RunnerConfig
 
 from pytest_ansible_vagrant.utilities import extract_play_hosts
-from pytest_ansible_vagrant.vagrant import SSHConfig
-
-
-def _ansible_run_playbook(
-    *,
-    playbook: str,
-    project_dir: str,
-    roles_path: str | None,
-    inventory: str,
-    extravars: dict[str, Any] | None,
-    artifact_subdir: str = ".artifacts",
-) -> None:
-    rcfg = RunnerConfig(
-        project_dir=project_dir,
-        private_data_dir=project_dir,
-        roles_path=roles_path or os.path.join(project_dir, "roles"),
-        playbook=playbook,
-        inventory=inventory,
-        artifact_dir=os.path.join(project_dir, artifact_subdir),
-        extravars=extravars or {},
-    )
-    rcfg.prepare()
-    status, rc = Runner(config=rcfg).run()
-    if not (status == "successful" and rc == 0):
-        raise RuntimeError(f"play failed: status={status}, rc={rc}")
+from pytest_ansible_vagrant.runner import SSHConfig
 
 
 def run_playbook_on_vagrant_host(
@@ -40,13 +17,14 @@ def run_playbook_on_vagrant_host(
     ssh: SSHConfig,
     inventory_file: str | None,
     extravars: dict[str, Any] | None,
+    artifact_dir: str | None,
 ) -> None:
     if inventory_file:
-        inv = inventory_file
+        inventory = inventory_file
     else:
         patterns = extract_play_hosts(playbook)
         host_aliases = patterns or ["vagrant_host"]
-        inv = ",".join(host_aliases) + ","
+        inventory = ",".join(host_aliases) + ","
 
     ssh_vars = {
         "ansible_connection": "ssh",
@@ -58,10 +36,17 @@ def run_playbook_on_vagrant_host(
         "ansible_python_interpreter": "/usr/bin/python3",
     }
 
-    _ansible_run_playbook(
-        playbook=playbook,
+    rcfg = RunnerConfig(
         project_dir=project_dir,
+        private_data_dir=project_dir,
         roles_path=os.path.join(project_dir, "roles"),
-        inventory=inv,
+        playbook=playbook,
+        inventory=inventory,
+        artifact_dir=artifact_dir or tempfile.mkdtemp(prefix="pytest-ansible-vagrant-"),
         extravars=(extravars or {}) | ssh_vars,
     )
+    rcfg.prepare()
+    status, rc = Runner(config=rcfg).run()
+
+    if rc != 0 or status != "successful":
+        raise RuntimeError(f"ansible-runner failed: status={status!r}, rc={rc}")

@@ -9,19 +9,27 @@ Pytest plugins for running various ansible tests against VMs in vagrant.
 
 ### Usage
 
+**minimal**
 ```python
-def test_vagrant_run(vagrant_run):
-    host = vagrant_run("tests/playbook-vms.yaml")  # Assumes `roles` directory next to `tests` dir
+from pytest_ansible_vagrant import VagrantRunner
+
+def test_vagrant_runner(vagrant_runner: VagrantRunner):
+    host = vagrant_runner("tests/playbook-vms.yaml")  # Assumes `roles` directory next to `tests` dir
 
     assert host.file("/etc/testfile").is_file  # Returns a `pytest-infra` host object for assertions
 ```
 
-### API
+**full**
+```python
+from pytest_ansible_vagrant import VagrantRunner
 
-> TODO: Document the API
+def test_vagrant_run(vagrant_run: VagrantRunner):
+    host = vagrant_run(
+      "tests/playbook-vms.yaml",
+      vagrant_file="Vagrant.ubuntu24",
+      extravars={"my_var": 42},
+      inventory_file="my_inventory.yml",
+    )
 
-- `vagrant_run` params:
-  - `playbook: str` - path to playbook
-  - `project_dir: str` - path to the base of the collections directory
-  - `vagrant_file: str` - path to Vagrantfile
-- Returns a [`host` object](https://testinfra.readthedocs.io/en/latest/modules.html) from [pytest-testinfra](https://github.com/pytest-dev/pytest-testinfra) to make assertions
+    assert host.file("/etc/testfile").is_file
+```

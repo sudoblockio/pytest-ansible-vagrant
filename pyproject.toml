@@ -21,3 +21,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pytest_ansible_vagrant"]
+
+[tool.setuptools.package-data]
+pytest_ansible_vagrant = ["py.typed", "*.pyi"]
