@@ -57,27 +57,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def _resolve_shutdown_mode(config: pytest.Config) -> ShutdownMode:
-    raw = (
-        (
-            config.getoption("vagrant_shutdown", default=None)
-            or config.getini("vagrant_shutdown")
-            or ""
-        )
-        .strip()
-        .lower()
-    )
-    if not raw:
-        raw = ShutdownMode.DESTROY.value
-    try:
-        return ShutdownMode(raw)
-    except ValueError as e:
-        raise pytest.UsageError(
-            f"Invalid vagrant_shutdown={raw!r}. Must be one of: "
-            + ", ".join(m.value for m in ShutdownMode)
-        ) from e
-
-
 @pytest.fixture(scope="module")
 def vagrant_runner(
     request: pytest.FixtureRequest,
@@ -89,7 +68,14 @@ def vagrant_runner(
         vf_abs = runner.vagrantfile
         if not vf_abs:
             return
-        mode = _resolve_shutdown_mode(request.config)
+
+        raw_mode = (
+            request.config.getoption("vagrant_shutdown", default=None)
+            or request.config.getini("vagrant_shutdown")
+            or ShutdownMode.NONE.value
+        )
+        mode = ShutdownMode(raw_mode)
+
         if mode is ShutdownMode.HALT:
             halt(vf_abs)
         elif mode is ShutdownMode.DESTROY:
