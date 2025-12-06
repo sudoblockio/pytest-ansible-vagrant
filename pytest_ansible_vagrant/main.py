@@ -28,6 +28,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "Directory to store artifacts from ansible run.",
         default="",
     )
+    parser.addini(
+        "vagrant_provider",
+        "Vagrant provider name (for example: virtualbox, libvirt).",
+        default="virtualbox",
+    )
 
     grp = parser.getgroup("vagrant")
     grp.addoption(
@@ -54,6 +59,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store",
         dest="vagrant_artifact_dir",
         help="Directory to store artifacts from ansible run.",
+    )
+    grp.addoption(
+        "--vagrant-provider",
+        action="store",
+        dest="vagrant_provider",
+        help="Vagrant provider name (for example: libvirt, virtualbox).",
     )
 
 

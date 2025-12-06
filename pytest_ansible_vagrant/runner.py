@@ -104,9 +104,17 @@ def _run(
     )
 
 
-def up(vagrantfile: str) -> int:
-    require_bins("vagrant", "ansible-playbook", "virsh", "qemu-system-x86_64")
-    return _run(["up", "--provider", "libvirt"], vagrantfile).returncode
+def up(vagrantfile: str, provider: str | None = "virtualbox") -> int:
+    if provider == "libvirt":
+        require_bins("vagrant", "ansible-playbook", "virsh", "qemu-system-x86_64")
+        args = ["up", "--provider", "libvirt"]
+    elif provider:
+        require_bins("vagrant", "ansible-playbook")
+        args = ["up", "--provider", provider]
+    else:
+        require_bins("vagrant", "ansible-playbook")
+        args = ["up"]
+    return _run(args, vagrantfile).returncode
 
 
 def halt(vagrantfile: str) -> int:
@@ -158,10 +166,15 @@ class VagrantRunner:
         artifact_dir_cli = config.getoption("vagrant_artifact_dir", default=None)
         artifact_dir_ini = config.getini("vagrant_artifact_dir") or None
 
+        provider_cli = config.getoption("vagrant_provider", default=None)
+        provider_ini = (config.getini("vagrant_provider") or "").strip()
+        provider = provider_cli or provider_ini or "virtualbox"
+
         self._config = config
         self._default_project_dir = default_project_dir
         self._artifact_dir_cli = artifact_dir_cli
         self._artifact_dir_ini = artifact_dir_ini
+        self._provider = provider
         self._vagrantfile: str | None = None
         self._host: Host | None = None
 
@@ -170,6 +183,7 @@ class VagrantRunner:
         playbook: str,
         project_dir: str | None = None,
         vagrant_file: str | None = None,
+        provider: str | None = None,
         extravars: dict[str, Any] | None = None,
         inventory_file: str | None = None,
         artifact_dir: str | None = None,
@@ -204,8 +218,9 @@ class VagrantRunner:
             raise FileNotFoundError(f"Vagrantfile not found at: {vf_abs!r}")
 
         self._vagrantfile = vf_abs
+        provider_to_use = self._provider if provider is None else provider
 
-        up(vf_abs)
+        up(vf_abs, provider=provider_to_use)
         cfg = ssh_config(vf_abs)
 
         run_playbook_on_vagrant_host(
