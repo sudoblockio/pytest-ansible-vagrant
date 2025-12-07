@@ -1,0 +1,20 @@
+---
+- name: Configure web server
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Create web marker file
+      file:
+        path: /etc/webfile
+        state: touch
+      become: true
+
+- name: Configure db server
+  hosts: db
+  gather_facts: false
+  tasks:
+    - name: Create db marker file
+      file:
+        path: /etc/dbfile
+        state: touch
+      become: true

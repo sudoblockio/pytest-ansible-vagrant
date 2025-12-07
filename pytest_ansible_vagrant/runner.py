@@ -37,27 +37,7 @@ class SSHConfig(TypedDict):
     identityfile: str
 
 
-def _from_ssh_config(text: str) -> SSHConfig:
-    in_block = False
-    fields: dict[str, str] = {}
-    for raw in text.splitlines():
-        if _PAT_HOST.match(raw):
-            if not in_block:
-                in_block = True
-                continue
-            break
-        if not in_block:
-            continue
-        m = _PAT_KV.match(raw)
-        if not m:
-            continue
-        key = m.group(1).lower()
-        val = m.group(2).strip()
-        # unquote
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        fields[key] = val
-
+def _parse_ssh_config_block(fields: dict[str, str]) -> SSHConfig:
     missing = [
         k for k in ("hostname", "user", "port", "identityfile") if k not in fields
     ]
@@ -81,6 +61,51 @@ def _from_ssh_config(text: str) -> SSHConfig:
         user=fields["user"],
         identityfile=fields["identityfile"],
     )
+
+
+def _from_ssh_config(text: str) -> SSHConfig:
+    hosts = _from_ssh_config_multi(text)
+    if not hosts:
+        raise ValueError("ssh-config contains no valid host blocks")
+    return next(iter(hosts.values()))
+
+
+def _from_ssh_config_multi(text: str) -> dict[str, SSHConfig]:
+    hosts: dict[str, SSHConfig] = {}
+    current_host: str | None = None
+    fields: dict[str, str] = {}
+
+    for raw in text.splitlines():
+        host_match = _PAT_HOST.match(raw)
+        if host_match:
+            if current_host is not None and fields:
+                try:
+                    hosts[current_host] = _parse_ssh_config_block(fields)
+                except ValueError:
+                    pass
+            current_host = host_match.group(1)
+            fields = {}
+            continue
+
+        if current_host is None:
+            continue
+
+        m = _PAT_KV.match(raw)
+        if not m:
+            continue
+        key = m.group(1).lower()
+        val = m.group(2).strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        fields[key] = val
+
+    if current_host is not None and fields:
+        try:
+            hosts[current_host] = _parse_ssh_config_block(fields)
+        except ValueError:
+            pass
+
+    return hosts
 
 
 def _env_for_file(vagrantfile: str) -> dict[str, str]:
@@ -126,9 +151,22 @@ def destroy(vagrantfile: str, force: bool = True) -> int:
     return _run(args, vagrantfile, check=False).returncode
 
 
-def ssh_config(vagrantfile: str) -> SSHConfig:
+def ssh_config(vagrantfile: str, host: str | None = None) -> SSHConfig:
     cp = _run(["ssh-config"], vagrantfile)
+    if host:
+        hosts = _from_ssh_config_multi(cp.stdout)
+        if host not in hosts:
+            available = list(hosts.keys())
+            raise ValueError(
+                f"Host {host!r} not found in ssh-config. Available: {available}"
+            )
+        return hosts[host]
     return _from_ssh_config(cp.stdout)
+
+
+def ssh_config_all(vagrantfile: str) -> dict[str, SSHConfig]:
+    cp = _run(["ssh-config"], vagrantfile)
+    return _from_ssh_config_multi(cp.stdout)
 
 
 class VagrantRunner:
@@ -177,6 +215,8 @@ class VagrantRunner:
         self._provider = provider
         self._vagrantfile: str | None = None
         self._host: Host | None = None
+        self._hosts: dict[str, Host] = {}
+        self._ssh_configs: dict[str, SSHConfig] = {}
 
     def __call__(
         self,
@@ -187,9 +227,9 @@ class VagrantRunner:
         extravars: dict[str, Any] | None = None,
         inventory_file: str | None = None,
         artifact_dir: str | None = None,
+        target_host: str | None = None,
     ) -> Host:
-        # Local import to avoid circular import at module load time.
-        from pytest_ansible_vagrant.ansible import run_playbook_on_vagrant_host
+        from pytest_ansible_vagrant.ansible import run_playbook_on_vagrant_hosts
 
         proj = (
             os.path.abspath(project_dir)
@@ -220,13 +260,27 @@ class VagrantRunner:
         self._vagrantfile = vf_abs
         provider_to_use = self._provider if provider is None else provider
 
-        up(vf_abs, provider=provider_to_use)
-        cfg = ssh_config(vf_abs)
+        self._hosts = {}
+        self._ssh_configs = {}
 
-        run_playbook_on_vagrant_host(
+        up(vf_abs, provider=provider_to_use)
+        all_ssh_configs = ssh_config_all(vf_abs)
+        self._ssh_configs = all_ssh_configs
+
+        if target_host:
+            if target_host not in all_ssh_configs:
+                available = list(all_ssh_configs.keys())
+                raise ValueError(
+                    f"Host {target_host!r} not found. Available: {available}"
+                )
+            ssh_configs_to_use = {target_host: all_ssh_configs[target_host]}
+        else:
+            ssh_configs_to_use = all_ssh_configs
+
+        run_playbook_on_vagrant_hosts(
             playbook=resolved_playbook,
             project_dir=proj,
-            ssh=cfg,
+            ssh_configs=ssh_configs_to_use,
             inventory_file=resolved_inventory,
             extravars=extravars,
             artifact_dir=self._artifact_dir_cli
@@ -234,19 +288,46 @@ class VagrantRunner:
             or artifact_dir,
         )
 
-        host = get_host(
-            f"ssh://{cfg['user']}@{cfg['hostname']}:{cfg['port']}",
-            ssh_identity_file=cfg["identityfile"],
-            ssh_extra_args="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null",
-        )
-        self._host = host
-        return host
+        for name, cfg in ssh_configs_to_use.items():
+            host = get_host(
+                f"ssh://{cfg['user']}@{cfg['hostname']}:{cfg['port']}",
+                ssh_identity_file=cfg["identityfile"],
+                ssh_extra_args="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null",
+            )
+            self._hosts[name] = host
+
+        if target_host:
+            self._host = self._hosts[target_host]
+        else:
+            self._host = next(iter(self._hosts.values()))
+
+        return self._host
 
     @property
     def host(self) -> Host:
         if self._host is None:
             raise RuntimeError("VagrantRunner has not been invoked yet")
         return self._host
+
+    @property
+    def hosts(self) -> dict[str, Host]:
+        if not self._hosts:
+            raise RuntimeError("VagrantRunner has not been invoked yet")
+        return self._hosts
+
+    def get_host(self, name: str) -> Host:
+        if not self._hosts:
+            raise RuntimeError("VagrantRunner has not been invoked yet")
+        if name not in self._hosts:
+            available = list(self._hosts.keys())
+            raise ValueError(f"Host {name!r} not found. Available: {available}")
+        return self._hosts[name]
+
+    @property
+    def ssh_configs(self) -> dict[str, SSHConfig]:
+        if not self._ssh_configs:
+            raise RuntimeError("VagrantRunner has not been invoked yet")
+        return self._ssh_configs
 
     @property
     def vagrantfile(self) -> str | None:

@@ -1,0 +1,10 @@
+---
+- name: Configure all hosts
+  hosts: vagrant
+  gather_facts: false
+  tasks:
+    - name: Create common marker file
+      file:
+        path: /etc/commonfile
+        state: touch
+      become: true

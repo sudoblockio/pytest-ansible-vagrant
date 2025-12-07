@@ -147,6 +147,83 @@ Control what happens to the VM after tests complete:
 - `halt` - Stop the VM but keep it
 - `none` - Leave the VM running
 
+## Multi-Host Support
+
+Test against multiple Vagrant VMs simultaneously using a multi-machine Vagrantfile:
+
+```ruby
+# Vagrantfile.multihost
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+
+  config.vm.define "web" do |web|
+    web.vm.hostname = "web"
+  end
+
+  config.vm.define "db" do |db|
+    db.vm.hostname = "db"
+  end
+end
+```
+
+### Run Playbook Against All Hosts
+
+```python
+def test_multihost(vagrant_runner: VagrantRunner):
+    vagrant_runner(
+        "playbook.yaml",
+        vagrant_file="Vagrantfile.multihost",
+    )
+
+    # Access individual hosts
+    web = vagrant_runner.get_host("web")
+    db = vagrant_runner.get_host("db")
+
+    assert web.file("/etc/webconfig").is_file
+    assert db.file("/etc/dbconfig").is_file
+```
+
+### Target a Specific Host
+
+```python
+def test_single_target(vagrant_runner: VagrantRunner):
+    host = vagrant_runner(
+        "playbook.yaml",
+        vagrant_file="Vagrantfile.multihost",
+        target_host="web",
+    )
+
+    assert host.file("/etc/webconfig").is_file
+```
+
+### Iterate Over All Hosts
+
+```python
+def test_all_hosts(vagrant_runner: VagrantRunner):
+    vagrant_runner("playbook.yaml", vagrant_file="Vagrantfile.multihost")
+
+    for name, host in vagrant_runner.hosts.items():
+        assert host.file("/etc/commonfile").is_file
+```
+
+### Playbook Host Targeting
+
+Use Ansible's `hosts` directive to target specific groups. The plugin creates a `[vagrant]` group with all hosts:
+
+```yaml
+# Target all hosts
+- hosts: vagrant
+  tasks: [...]
+
+# Target specific host
+- hosts: web
+  tasks: [...]
+
+# Target multiple hosts
+- hosts: web,db
+  tasks: [...]
+```
+
 ## Testinfra Integration
 
 The `vagrant_runner()` call returns a [testinfra](https://testinfra.readthedocs.io/) `Host` object for assertions:
