@@ -4,11 +4,13 @@ import os
 import re
 import subprocess
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import pytest
 from testinfra import get_host
 from testinfra.host import Host
+
+from pytest_ansible_vagrant.stubs import HostProtocol
 
 from pytest_ansible_vagrant.utilities import (
     infer_project_dir_from_request,
@@ -228,7 +230,7 @@ class VagrantRunner:
         inventory_file: str | None = None,
         artifact_dir: str | None = None,
         target_host: str | None = None,
-    ) -> Host:
+    ) -> HostProtocol:
         from pytest_ansible_vagrant.ansible import run_playbook_on_vagrant_hosts
 
         proj = (
@@ -301,27 +303,27 @@ class VagrantRunner:
         else:
             self._host = next(iter(self._hosts.values()))
 
-        return self._host
+        return cast(HostProtocol, self._host)
 
     @property
-    def host(self) -> Host:
+    def host(self) -> HostProtocol:
         if self._host is None:
             raise RuntimeError("VagrantRunner has not been invoked yet")
-        return self._host
+        return cast(HostProtocol, self._host)
 
     @property
-    def hosts(self) -> dict[str, Host]:
+    def hosts(self) -> dict[str, HostProtocol]:
         if not self._hosts:
             raise RuntimeError("VagrantRunner has not been invoked yet")
-        return self._hosts
+        return cast(dict[str, HostProtocol], self._hosts)
 
-    def get_host(self, name: str) -> Host:
+    def get_host(self, name: str) -> HostProtocol:
         if not self._hosts:
             raise RuntimeError("VagrantRunner has not been invoked yet")
         if name not in self._hosts:
             available = list(self._hosts.keys())
             raise ValueError(f"Host {name!r} not found. Available: {available}")
-        return self._hosts[name]
+        return cast(HostProtocol, self._hosts[name])
 
     @property
     def ssh_configs(self) -> dict[str, SSHConfig]:

@@ -19,7 +19,7 @@ def infer_project_dir_from_request(request: pytest.FixtureRequest) -> str:
     Walk up from the test file until 'tests/' is found, then return its parent.
     Fallback: parent-of-parent of the test file.
     """
-    test_file = os.path.abspath(str(request.fspath))
+    test_file = os.path.abspath(str(request.path))
     cur = os.path.dirname(test_file)
     while True:
         if os.path.basename(cur) == "tests":

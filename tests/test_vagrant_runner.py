@@ -21,7 +21,7 @@ def _make_mock_request(tmp_path: Path) -> MagicMock:
     mock_request = MagicMock()
     mock_request.config.getoption.return_value = None
     mock_request.config.getini.return_value = ""
-    mock_request.fspath = tmp_path / "tests" / "test_file.py"
+    mock_request.path = tmp_path / "tests" / "test_file.py"
 
     (tmp_path / "roles").mkdir()
     (tmp_path / "tests").mkdir()
